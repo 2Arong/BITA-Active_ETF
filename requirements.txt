@@ -1,0 +1,6 @@
+pandas
+numpy
+FinanceDataReader
+matplotlib
+openpyxl
+streamlit
