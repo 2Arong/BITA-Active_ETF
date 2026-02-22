@@ -4,3 +4,4 @@ FinanceDataReader
 matplotlib
 openpyxl
 streamlit
+plotly
