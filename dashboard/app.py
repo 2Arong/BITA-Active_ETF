@@ -91,7 +91,7 @@ def group_to_date_label(g):
     period = GROUP_PERIODS.get(g)
     if not period:
         return g
-    s = period[0][5:]  # '2025-01-02' → '01-02'
+    s = period[0][5:]
     e = period[1][5:]
     return f"{s.replace('-', '.')}~{e.replace('-', '.')}"
 
@@ -185,10 +185,10 @@ st.markdown("")
 st.markdown('<p class="section-title">수익률</p>', unsafe_allow_html=True)
 
 period_config = {
-    "1개월": 2,
-    "3개월": 6,
-    "6개월": 13,
     "1년": None,
+    "6개월": 13,
+    "3개월": 6,
+    "1개월": 2,
 }
 
 tab_labels = list(period_config.keys())
