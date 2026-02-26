@@ -149,24 +149,33 @@ def date_to_group(d, group_list):
     return group_list[-1]
 
 # --- 재무 데이터 수집 함수 ---
+import time as _time
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_financial_summary(ticker_code):
     code = str(ticker_code).zfill(6)
+    max_retries = 3
     for suffix in (".KS", ".KQ"):
-        try:
-            stock = yf.Ticker(f"{code}{suffix}")
-            info = stock.info
-            if info.get('marketCap'):
-                return {
-                    "PER": info.get('forwardPE') or info.get('trailingPE') or 0,
-                    "PBR": info.get('priceToBook') or 0,
-                    "ROE": info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
-                    "시가총액": (info.get('marketCap') or 0) / 1e12,
-                    "배당수익률": (info.get('dividendYield') or 0) * 100,
-                    "_error": None,
-                }
-        except Exception as e:
-            last_err = str(e)
+        for attempt in range(max_retries):
+            try:
+                stock = yf.Ticker(f"{code}{suffix}")
+                info = stock.info
+                if info.get('marketCap'):
+                    return {
+                        "PER": info.get('forwardPE') or info.get('trailingPE') or 0,
+                        "PBR": info.get('priceToBook') or 0,
+                        "ROE": info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
+                        "시가총액": (info.get('marketCap') or 0) / 1e12,
+                        "배당수익률": (info.get('dividendYield') or 0) * 100,
+                        "_error": None,
+                    }
+                break
+            except Exception as e:
+                last_err = str(e)
+                if "Rate" in last_err or "Too Many" in last_err:
+                    _time.sleep(2 ** attempt)
+                else:
+                    break
     return {"_error": last_err if 'last_err' in dir() else "데이터를 찾을 수 없습니다"}
 
 # --- 네이버 뉴스 데이터 수집 함수 ---
