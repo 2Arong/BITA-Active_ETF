@@ -75,7 +75,7 @@ st.markdown(f"""
         position: relative;
         z-index: 1;
     }}
-    /* Bita_증권 타이틀 스타일 */
+    /* BITA 증권 타이틀 스타일 */
     .broker-title {{ 
         font-size: 1.8rem; 
         font-weight: 900; 
@@ -333,7 +333,7 @@ for tab, (label, win) in zip(tabs, period_config.items()):
 
         rc1, rc2, rc3, rc4 = st.columns(4)
         delta_vs_kospi = (ret_my - ret_kospi) * 100
-        rc1.metric("Bita_active ETF", fmt_pct(ret_my), f"{delta_vs_kospi:+.1f}%p vs KOSPI") # 👈 이름 변경
+        rc1.metric("BITActive ETF", fmt_pct(ret_my), f"{delta_vs_kospi:+.1f}%p vs KOSPI") # 👈 이름 변경
         rc2.metric("KOSPI", fmt_pct(ret_kospi))
         rc3.metric("KOSPI 200", fmt_pct(ret_k200))
         rc4.metric("KoAct 배당성장", fmt_pct(ret_koact))
@@ -347,7 +347,7 @@ for tab, (label, win) in zip(tabs, period_config.items()):
         fig_tab = go.Figure()
         fig_tab.add_trace(go.Scatter(
             x=tail_dates, y=tail_nav, mode="lines+markers",
-            name="Bita_active ETF", line=dict(color=THEME_ORANGE, width=3), marker=dict(size=6), # 👈 이름 변경
+            name="BITActive ETF", line=dict(color=THEME_ORANGE, width=3), marker=dict(size=6), # 👈 이름 변경
         ))
         fig_tab.add_trace(go.Scatter(
             x=tail_dates, y=tail_kospi, mode="lines", name="KOSPI",
@@ -378,7 +378,7 @@ x_dates = res["EndDate"]
 fig_nav = go.Figure()
 fig_nav.add_trace(go.Scatter(
     x=x_dates, y=nav_series, mode="lines+markers",
-    name=f"Bita_active ETF ({strategy_label})", # 👈 이름 변경
+    name=f"BITActive ETF", # 👈 이름 변경
     line=dict(color=THEME_ORANGE, width=3), marker=dict(size=6),
     hovertemplate="%{x}<br>%{y:,.0f}원<extra></extra>",
 ))
