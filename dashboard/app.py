@@ -24,7 +24,7 @@ from backtesting_2w import (
 NAV_BASE = 10_000
 
 # ─────────────────────────────────────────────
-# 🎨 아롱님 맞춤형 디자인 테마 (주황색 강조 & 큰 이모티콘)
+# 🎨 BITAmin 맞춤형 디자인 테마 (주황색 강조 & 큰 이모티콘)
 # ─────────────────────────────────────────────
 THEME_ORANGE = "#FF6F00"       # 메인 진한 주황
 THEME_LIGHT_ORANGE = "#FFB300" # 밝은 주황 (골드 느낌)
@@ -42,7 +42,7 @@ THEME_COLORS = [
 # 페이지 설정 및 CSS 디자인
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Bita_active ETF 대시보드", # 👈 탭 이름 변경
+    page_title="BITActive ETF 대시보드", # 👈 탭 이름 변경
     page_icon="🍊", 
     layout="wide",
 )
@@ -152,23 +152,22 @@ def date_to_group(d, group_list):
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_financial_summary(ticker_code):
     code = str(ticker_code).zfill(6)
-    try:
-        stock = yf.Ticker(f"{code}.KS")
-        info = stock.info
-        if not info.get('marketCap'):
-            stock = yf.Ticker(f"{code}.KQ")
+    for suffix in (".KS", ".KQ"):
+        try:
+            stock = yf.Ticker(f"{code}{suffix}")
             info = stock.info
-            
-        summary = {
-            "PER": info.get('forwardPE') or info.get('trailingPE') or 0,
-            "PBR": info.get('priceToBook') or 0,
-            "ROE": info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
-            "시가총액": (info.get('marketCap') or 0) / 1e12,
-            "배당수익률": (info.get('dividendYield') or 0) * 100
-        }
-        return summary
-    except Exception:
-        return None
+            if info.get('marketCap'):
+                return {
+                    "PER": info.get('forwardPE') or info.get('trailingPE') or 0,
+                    "PBR": info.get('priceToBook') or 0,
+                    "ROE": info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
+                    "시가총액": (info.get('marketCap') or 0) / 1e12,
+                    "배당수익률": (info.get('dividendYield') or 0) * 100,
+                    "_error": None,
+                }
+        except Exception as e:
+            last_err = str(e)
+    return {"_error": last_err if 'last_err' in dir() else "데이터를 찾을 수 없습니다"}
 
 # --- 네이버 뉴스 데이터 수집 함수 ---
 @st.cache_data(ttl=600, show_spinner=False)
@@ -369,7 +368,7 @@ with col_comp:
 
     comp_df = pd.DataFrame({ "선정유형": type_weights.index, "비중": type_weights.values })
     comp_df["비중"] = comp_df["비중"].map(lambda v: f"{v * 100:.1f}%")
-    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+    st.dataframe(comp_df, width="stretch", hide_index=True)
 
 with col_stock:
     st.markdown('<p class="section-title">주식 종목별 비중 TOP5</p>', unsafe_allow_html=True)
@@ -392,7 +391,7 @@ with col_stock:
 
     disp_stock = top5_stocks[["종목명"]].copy()
     disp_stock["비중"] = top5_stocks[w_col].map(lambda v: f"{v * 100:.1f}%")
-    st.dataframe(disp_stock, use_container_width=True, hide_index=True)
+    st.dataframe(disp_stock, width="stretch", hide_index=True)
 
 # =========================================================
 # 섹션 6: 업종별 비중 TOP5
@@ -431,7 +430,7 @@ with col_sec_tbl:
         "종목": [sector_stocks[s] for s in sector_weights.index],
     })
     sec_df["비중"] = sec_df["비중"].map(lambda v: f"{v * 100:.1f}%")
-    st.dataframe(sec_df, use_container_width=True, hide_index=True)
+    st.dataframe(sec_df, width="stretch", hide_index=True)
 
 # =========================================================
 # 섹션 7: 성과 지표 카드
@@ -501,7 +500,7 @@ with col_tbl:
         "수익률": (sel_h["return"] * 100).map("{:+.2f}%".format),
         "기여도": (sel_h[contrib_col] * 100).map("{:+.3f}%".format),
     })
-    st.dataframe(disp_h, use_container_width=True, hide_index=True, height=350)
+    st.dataframe(disp_h, width="stretch", hide_index=True, height=350)
 
 with col_pie:
     st.markdown(f"**<span style='color:{THEME_ORANGE}'>🍩 포트폴리오 비중</span>**", unsafe_allow_html=True)
@@ -525,20 +524,20 @@ with col_fin:
     
     with st.spinner(f'{selected_stock} 재무 데이터 분석 중...'):
         fin = get_financial_summary(ticker)
-        if fin:
+        if fin.get("_error"):
+            st.error(f"재무 정보를 불러올 수 없습니다.\n\n`{ticker}` → {fin['_error']}")
+        else:
             m1, m2 = st.columns(2)
             m1.metric("시가총액", f"{fin['시가총액']:.1f}조")
             m2.metric("배당수익률", f"{fin['배당수익률']:.1f}%")
-            
+
             m3, m4 = st.columns(2)
             m3.metric("PER", f"{fin['PER']:.1f}배" if fin['PER'] > 0 else "N/A")
             m4.metric("PBR", f"{fin['PBR']:.1f}배" if fin['PBR'] > 0 else "N/A")
-            
+
             st.write(f"**ROE (자기자본이익률): {fin['ROE']:.1f}%**")
             st.markdown(f"<style>.stProgress > div > div > div > div {{ background-color: {THEME_ORANGE} !important; }}</style>", unsafe_allow_html=True)
             st.progress(min(max(fin['ROE']/30, 0.0), 1.0))
-        else:
-            st.error("재무 정보를 불러올 수 없습니다.")
 
 # =========================================================
 # ✨ 네이버 뉴스 화면 
