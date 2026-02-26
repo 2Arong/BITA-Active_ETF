@@ -134,6 +134,10 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# API keys (로컬 전용)
+api_key.json
+dashboard/api_key.json
+
 # Environments
 .env
 .envrc
