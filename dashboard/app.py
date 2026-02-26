@@ -12,9 +12,11 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import FinanceDataReader as fdr
-import yfinance as yf   # 재무 데이터 라이브러리
-import requests         # 네이버 API 통신 라이브러리
-import html             # 뉴스 제목 특수문자 처리 라이브러리
+import json
+import yfinance as yf
+import requests
+import html
+from openai import OpenAI
 
 from backtesting_2w import (
     GROUP_PERIODS, GROUP_KEYS, PRICE_LABEL,
@@ -195,6 +197,57 @@ def get_naver_news(query, client_id, client_secret, display=5):
     except Exception:
         return []
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def analyze_news_with_gpt(stock_name: str, news_titles: list[str],
+                          news_descs: list[str], api_key: str) -> list[dict]:
+    """ChatGPT API로 뉴스 제목+본문요약의 호재/악재 판단 및 요약을 수행한다."""
+    articles = []
+    for i, (t, d) in enumerate(zip(news_titles, news_descs)):
+        articles.append(f"{i+1}. 제목: {t}\n   내용: {d}")
+    articles_text = "\n".join(articles)
+    prompt = (
+        f"다음은 '{stock_name}' 관련 최신 뉴스 목록입니다. 각 기사의 제목과 본문 요약이 포함되어 있습니다.\n\n"
+        f"{articles_text}\n\n"
+        "각 뉴스에 대해 아래 JSON 배열 형식으로만 응답해주세요. 다른 텍스트 없이 JSON만 출력하세요.\n"
+        '[\n'
+        '  {"번호": 1, "판단": "호재" 또는 "악재" 또는 "중립", "요약": "기사 내용을 바탕으로 한 2~3문장 요약"},\n'
+        '  ...\n'
+        ']\n'
+        "판단 기준: 해당 종목의 주가에 긍정적이면 호재, 부정적이면 악재, 판단이 어려우면 중립."
+    )
+    try:
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=1024,
+        )
+        content = resp.choices[0].message.content.strip()
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+        return json.loads(content)
+    except Exception as e:
+        return [{"_error": str(e)}]
+
+
+def load_api_key(key_name: str) -> str | None:
+    """로컬 api_key.json → Streamlit secrets 순으로 키를 탐색한다."""
+    json_path = os.path.join(_DIR, "api_key.json")
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            keys = json.load(f)
+        if key_name in keys:
+            return keys[key_name]
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    try:
+        return st.secrets[key_name]
+    except (KeyError, FileNotFoundError):
+        return None
+
+
 SIGNAL_TYPE = "외국인단독"
 
 # ─────────────────────────────────────────────
@@ -249,7 +302,7 @@ change_arrow = "▲" if nav_change >= 0 else "▼"
 
 st.markdown(f"""
 <div class="nav-card">
-    <div class="broker-title">Bita_증권</div> <p class="etf-name">Bita_active ETF — {sig_label} / {strategy_label}</p> <p class="nav-price">{last_nav:,.0f}원</p>
+    <div class="broker-title">BITA 증권</div> <p class="etf-name">BiTActive ETF — {sig_label} / {strategy_label}</p> <p class="nav-price">{last_nav:,.0f}원</p>
     <p class="nav-change" style="color:{change_color}; background-color: rgba(0,0,0,0.2); padding: 4px 12px; border-radius: 6px; display: inline-block;">
         전 기간 대비 {change_arrow} {abs(nav_change):,.0f}원 ({nav_change_pct:+.2%})
         &nbsp;&nbsp;|&nbsp;&nbsp;설정일 이후 {total_ret:+.2%}
@@ -549,22 +602,66 @@ with col_fin:
             st.progress(min(max(fin['ROE']/30, 0.0), 1.0))
 
 # =========================================================
-# ✨ 네이버 뉴스 화면 
+# 섹션 10: 뉴스 + AI 분석 (좌우 배치)
 # =========================================================
-st.markdown("---") 
-st.markdown(f"""<h4 style='color: {THEME_ORANGE};'>📰 {selected_stock} 실시간 관련 이슈</h4><div class="news-link">""", unsafe_allow_html=True)
+st.markdown("---")
 
-NAVER_CLIENT_ID = "8mUdV3f4VWWinJ4AFKNr"
-NAVER_CLIENT_SECRET = "EMMY6g7JBA"
+NAVER_CLIENT_ID = load_api_key("naver_client_id")
+NAVER_CLIENT_SECRET = load_api_key("naver_client_secret")
+OPENAI_KEY = load_api_key("secret_key")
 
-with st.spinner('최신 뉴스 검색 중...'):
-    news_items = get_naver_news(selected_stock, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, display=5)
-    
-    if news_items:
-        for item in news_items:
-            title = html.unescape(item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"'))
-            link = item['link']
-            st.markdown(f"- [{title}]({link})")
-    else:
+clean_titles = []
+clean_links = []
+clean_descs = []
+
+if NAVER_CLIENT_ID and NAVER_CLIENT_SECRET:
+    with st.spinner('최신 뉴스 검색 중...'):
+        news_items = get_naver_news(selected_stock, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, display=5)
+        if news_items:
+            for item in news_items:
+                t = html.unescape(item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"'))
+                d = html.unescape(item.get('description', '').replace('<b>', '').replace('</b>', '').replace('&quot;', '"'))
+                clean_titles.append(t)
+                clean_links.append(item['link'])
+                clean_descs.append(d)
+
+analysis = []
+if clean_titles and OPENAI_KEY:
+    with st.spinner("ChatGPT가 뉴스를 분석하고 있습니다..."):
+        analysis = analyze_news_with_gpt(selected_stock, clean_titles, clean_descs, OPENAI_KEY)
+    if analysis and analysis[0].get("_error"):
+        analysis = []
+
+col_news, col_ai = st.columns(2)
+
+with col_news:
+    st.markdown(f"""<h4 style='color: {THEME_ORANGE};'>📰 {selected_stock} 실시간 관련 이슈</h4>""",
+                unsafe_allow_html=True)
+    st.caption(f"최근 5건의 뉴스 제목입니다. 추가적인 정보는 뉴스 링크를 클릭하여 확인할 수 있습니다.")
+    if clean_titles:
+        for t, link in zip(clean_titles, clean_links):
+            st.markdown(f"- [{t}]({link})")
+    elif NAVER_CLIENT_ID:
         st.info("검색된 관련 뉴스가 없습니다.")
-st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.warning("네이버 API 키가 설정되지 않았습니다.")
+
+with col_ai:
+    st.markdown(f"""<h4 style='color: {THEME_ORANGE};'>🤖 AI의 {selected_stock} 뉴스 분석</h4>""",
+                unsafe_allow_html=True)
+    if analysis:
+        BADGE = {"호재": "🟢", "악재": "🔴", "중립": "🟡"}
+        for item in analysis:
+            badge = BADGE.get(item.get("판단", "중립"), "🟡")
+            idx = item.get("번호", 0) - 1
+            title = clean_titles[idx] if 0 <= idx < len(clean_titles) else f"기사 {idx+1}"
+            summary = item.get("요약", "")
+            st.markdown(f"{badge} **{item.get('판단', '중립')}** — {title}")
+            st.markdown(f"> {summary}")
+        st.caption("GPT 기반 분석이며, 투자 판단의 근거로 사용하기에 적합하지 않습니다.")
+    elif not OPENAI_KEY:
+        st.info("OpenAI API 키가 설정되지 않아 분석을 건너뜁니다.")
+    elif not clean_titles:
+        st.info("분석할 뉴스가 없습니다.")
+    else:
+        st.error("뉴스 분석에 실패했습니다.")

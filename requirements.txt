@@ -7,3 +7,5 @@ streamlit>=1.30
 altair>=5,<7
 plotly
 yfinance
+openai
+requests
