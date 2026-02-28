@@ -12,11 +12,9 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import FinanceDataReader as fdr
-import json
-import yfinance as yf
-import requests
-import html
-from openai import OpenAI
+import yfinance as yf   # 재무 데이터 라이브러리
+import requests         # 네이버 API 통신 라이브러리
+import html             # 뉴스 제목 특수문자 처리 라이브러리
 
 from backtesting_2w import (
     GROUP_PERIODS, GROUP_KEYS, PRICE_LABEL,
@@ -26,7 +24,7 @@ from backtesting_2w import (
 NAV_BASE = 10_000
 
 # ─────────────────────────────────────────────
-# 🎨 BITAmin 맞춤형 디자인 테마 (주황색 강조 & 큰 이모티콘)
+# 🎨 아롱님 맞춤형 디자인 테마 (주황색 강조 & 큰 이모티콘)
 # ─────────────────────────────────────────────
 THEME_ORANGE = "#FF6F00"       # 메인 진한 주황
 THEME_LIGHT_ORANGE = "#FFB300" # 밝은 주황 (골드 느낌)
@@ -44,7 +42,7 @@ THEME_COLORS = [
 # 페이지 설정 및 CSS 디자인
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="BITActive ETF 대시보드", # 👈 탭 이름 변경
+    page_title="Bita_active ETF 대시보드",
     page_icon="🍊", 
     layout="wide",
 )
@@ -55,39 +53,27 @@ st.markdown(f"""
     .nav-card {{
         background: linear-gradient(135deg, {THEME_ORANGE} 0%, {THEME_LIGHT_ORANGE} 100%);
         padding: 2rem 2.5rem; border-radius: 1.2rem; color: white;
-        box-shadow: 0 6px 20px rgba(255, 111, 0, 0.4); /* 주황색 그림자 강화 */
+        box-shadow: 0 6px 20px rgba(255, 111, 0, 0.4);
         position: relative; 
         overflow: hidden;   
     }}
-    /* 큰 오렌지 이모티콘 스타일 (크고 진하게!) */
     .nav-card::after {{
         content: '🍊';
-        font-size: 13rem; /* 엄청 크게 키움 */
+        font-size: 13rem;
         position: absolute;
         right: -10px;
         bottom: -40px;
-        opacity: 0.45; /* 기존 0.2에서 0.45로 훨씬 진하게 변경 */
+        opacity: 0.45;
         transform: rotate(-15deg);
         z-index: 0;
     }}
-    /* 글자들이 오렌지에 가려지지 않게 z-index 설정 */
-    .nav-card > * {{
-        position: relative;
-        z-index: 1;
-    }}
-    /* BITA 증권 타이틀 스타일 */
-    .broker-title {{ 
-        font-size: 1.8rem; 
-        font-weight: 900; 
-        margin: 0 0 1rem 0; 
-        color: rgba(255, 255, 255, 0.95); 
-        letter-spacing: 1.5px; 
-    }}
+    .nav-card > * {{ position: relative; z-index: 1; }}
+    .broker-title {{ font-size: 1.8rem; font-weight: 900; margin: 0 0 1rem 0; color: rgba(255, 255, 255, 0.95); letter-spacing: 1.5px; }}
     .nav-card .etf-name {{ font-size: 1.1rem; opacity: 0.95; margin: 0; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.1); }}
     .nav-card .nav-price {{ font-size: 3.2rem; font-weight: 800; margin: 0.3rem 0 0.5rem 0; text-shadow: 1px 1px 3px rgba(0,0,0,0.2); line-height: 1.1; }}
     .nav-card .nav-change {{ font-size: 1.15rem; margin-top: 0.3rem; font-weight: 700; }}
 
-    /* 섹션 타이틀 (주황색 텍스트 & 강조선) */
+    /* 섹션 타이틀 */
     .section-title {{
         font-size: 1.3rem; font-weight: 700;
         color: {THEME_ORANGE};
@@ -110,14 +96,43 @@ st.markdown(f"""
 # 헬퍼 함수
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=86400, show_spinner=False)
+def get_benchmark_returns(start_date, end_date, target_dates):
+    """외부에서 실제 시장 지수를 가져와 백테스트 날짜에 맞춘 수익률 리스트 반환"""
+    benchmarks = {"KOSPI": "KS11", "KOSPI200": "KS200"}
+    results = {}
+    
+    for name, ticker in benchmarks.items():
+        try:
+            df = fdr.DataReader(ticker, start_date, end_date)
+            returns = []
+            for i in range(len(target_dates)):
+                curr_date = target_dates[i]
+                prev_date = target_dates[i-1] if i > 0 else start_date
+                
+                try:
+                    period_data = df.loc[prev_date:curr_date]
+                    if len(period_data) >= 2:
+                        ret = (period_data['Close'].iloc[-1] / period_data['Close'].iloc[0]) - 1
+                    else:
+                        ret = 0.0
+                except:
+                    ret = 0.0
+                returns.append(ret)
+            results[name] = returns
+        except Exception as e:
+            st.warning(f"{name} 데이터를 가져오는 중 오류 발생: {e}")
+            results[name] = [0.0] * len(target_dates)
+            
+    return results
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_sector_map():
     try:
         listing = fdr.StockListing("KRX-DESC")
         listing["Code"] = listing["Code"].astype(str).str.zfill(6)
         return dict(zip(listing["Code"], listing["Sector"]))
     except Exception:
-        pass
-    return {}
+        return {}
 
 def calc_window_return(series, n):
     if n is None or n >= len(series): return float((1 + series).prod() - 1)
@@ -151,34 +166,26 @@ def date_to_group(d, group_list):
     return group_list[-1]
 
 # --- 재무 데이터 수집 함수 ---
-import time as _time
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_financial_summary(ticker_code):
     code = str(ticker_code).zfill(6)
-    max_retries = 3
-    for suffix in (".KS", ".KQ"):
-        for attempt in range(max_retries):
-            try:
-                stock = yf.Ticker(f"{code}{suffix}")
-                info = stock.info
-                if info.get('marketCap'):
-                    return {
-                        "PER": info.get('forwardPE') or info.get('trailingPE') or 0,
-                        "PBR": info.get('priceToBook') or 0,
-                        "ROE": info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
-                        "시가총액": (info.get('marketCap') or 0) / 1e12,
-                        "배당수익률": (info.get('dividendYield') or 0) * 100,
-                        "_error": None,
-                    }
-                break
-            except Exception as e:
-                last_err = str(e)
-                if "Rate" in last_err or "Too Many" in last_err:
-                    _time.sleep(2 ** attempt)
-                else:
-                    break
-    return {"_error": last_err if 'last_err' in dir() else "데이터를 찾을 수 없습니다"}
+    try:
+        stock = yf.Ticker(f"{code}.KS")
+        info = stock.info
+        if not info.get('marketCap'):
+            stock = yf.Ticker(f"{code}.KQ")
+            info = stock.info
+            
+        summary = {
+            "PER": info.get('forwardPE') or info.get('trailingPE') or 0,
+            "PBR": info.get('priceToBook') or 0,
+            "ROE": info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
+            "시가총액": (info.get('marketCap') or 0) / 1e12,
+            "배당수익률": (info.get('dividendYield') or 0) * 100
+        }
+        return summary
+    except Exception:
+        return None
 
 # --- 네이버 뉴스 데이터 수집 함수 ---
 @st.cache_data(ttl=600, show_spinner=False)
@@ -197,57 +204,6 @@ def get_naver_news(query, client_id, client_secret, display=5):
     except Exception:
         return []
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def analyze_news_with_gpt(stock_name: str, news_titles: list[str],
-                          news_descs: list[str], api_key: str) -> list[dict]:
-    """ChatGPT API로 뉴스 제목+본문요약의 호재/악재 판단 및 요약을 수행한다."""
-    articles = []
-    for i, (t, d) in enumerate(zip(news_titles, news_descs)):
-        articles.append(f"{i+1}. 제목: {t}\n   내용: {d}")
-    articles_text = "\n".join(articles)
-    prompt = (
-        f"다음은 '{stock_name}' 관련 최신 뉴스 목록입니다. 각 기사의 제목과 본문 요약이 포함되어 있습니다.\n\n"
-        f"{articles_text}\n\n"
-        "각 뉴스에 대해 아래 JSON 배열 형식으로만 응답해주세요. 다른 텍스트 없이 JSON만 출력하세요.\n"
-        '[\n'
-        '  {"번호": 1, "판단": "호재" 또는 "악재" 또는 "중립", "요약": "기사 내용을 바탕으로 한 2~3문장 요약"},\n'
-        '  ...\n'
-        ']\n'
-        "판단 기준: 해당 종목의 주가에 긍정적이면 호재, 부정적이면 악재, 판단이 어려우면 중립."
-    )
-    try:
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model="gpt-5-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=1024,
-        )
-        content = resp.choices[0].message.content.strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        return json.loads(content)
-    except Exception as e:
-        return [{"_error": str(e)}]
-
-
-def load_api_key(key_name: str) -> str | None:
-    """로컬 api_key.json → Streamlit secrets 순으로 키를 탐색한다."""
-    json_path = os.path.join(_DIR, "api_key.json")
-    try:
-        with open(json_path, encoding="utf-8") as f:
-            keys = json.load(f)
-        if key_name in keys:
-            return keys[key_name]
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    try:
-        return st.secrets[key_name]
-    except (KeyError, FileNotFoundError):
-        return None
-
-
 SIGNAL_TYPE = "외국인단독"
 
 # ─────────────────────────────────────────────
@@ -262,8 +218,20 @@ def cached_backtest(signal):
 # 메인 (페이지 로드 시 자동 실행)
 # ─────────────────────────────────────────────
 if "result" not in st.session_state:
-    with st.spinner("백테스팅 실행 중... (첫 실행 시 1~3분 소요)"):
+    with st.spinner("백테스팅 및 벤치마크 데이터 로드 중... (첫 실행 시 1~3분 소요)"):
         res, m_eq, m_sc, m_ka, holdings = cached_backtest(SIGNAL_TYPE)
+        
+        # 🚨 [핵심 수정 사항] KOSPI, KOSPI200 데이터 보완
+        # res에 'KOSPI' 열이 없거나 모든 값이 0이라면 fdr을 통해 실시간 지수 수익률을 가져와 채움
+        if "KOSPI" not in res.columns or res["KOSPI"].sum() == 0:
+            start_date = res["EndDate"].min()
+            end_date = res["EndDate"].max()
+            target_dates = res["EndDate"].tolist()
+            
+            bench_data = get_benchmark_returns(start_date, end_date, target_dates)
+            res["KOSPI"] = bench_data.get("KOSPI", [0.0] * len(res))
+            res["KOSPI200"] = bench_data.get("KOSPI200", [0.0] * len(res))
+
     st.session_state.update({
         "result": res, "m_eq": m_eq, "m_sc": m_sc, "m_ka": m_ka,
         "holdings": holdings,
@@ -302,7 +270,7 @@ change_arrow = "▲" if nav_change >= 0 else "▼"
 
 st.markdown(f"""
 <div class="nav-card">
-    <div class="broker-title">BITA 증권</div> <p class="etf-name">BiTActive ETF — {sig_label} / {strategy_label}</p> <p class="nav-price">{last_nav:,.0f}원</p>
+    <div class="broker-title">Bita_증권</div> <p class="etf-name">Bita_active ETF — {sig_label} / {strategy_label}</p> <p class="nav-price">{last_nav:,.0f}원</p>
     <p class="nav-change" style="color:{change_color}; background-color: rgba(0,0,0,0.2); padding: 4px 12px; border-radius: 6px; display: inline-block;">
         전 기간 대비 {change_arrow} {abs(nav_change):,.0f}원 ({nav_change_pct:+.2%})
         &nbsp;&nbsp;|&nbsp;&nbsp;설정일 이후 {total_ret:+.2%}
@@ -329,11 +297,13 @@ for tab, (label, win) in zip(tabs, period_config.items()):
         ret_my = calc_window_return(s_ret, win)
         ret_kospi = calc_window_return(res["KOSPI"], win)
         ret_k200 = calc_window_return(res["KOSPI200"], win)
-        ret_koact = calc_window_return(res["KoAct"], win)
+        
+        # KoAct 지수는 기존 데이터프레임(res)에 의존하므로 예외 처리 추가
+        ret_koact = calc_window_return(res["KoAct"], win) if "KoAct" in res.columns else 0.0
 
         rc1, rc2, rc3, rc4 = st.columns(4)
         delta_vs_kospi = (ret_my - ret_kospi) * 100
-        rc1.metric("BITActive ETF", fmt_pct(ret_my), f"{delta_vs_kospi:+.1f}%p vs KOSPI") # 👈 이름 변경
+        rc1.metric("Bita_active ETF", fmt_pct(ret_my), f"{delta_vs_kospi:+.1f}%p vs KOSPI")
         rc2.metric("KOSPI", fmt_pct(ret_kospi))
         rc3.metric("KOSPI 200", fmt_pct(ret_k200))
         rc4.metric("KoAct 배당성장", fmt_pct(ret_koact))
@@ -347,7 +317,7 @@ for tab, (label, win) in zip(tabs, period_config.items()):
         fig_tab = go.Figure()
         fig_tab.add_trace(go.Scatter(
             x=tail_dates, y=tail_nav, mode="lines+markers",
-            name="BITActive ETF", line=dict(color=THEME_ORANGE, width=3), marker=dict(size=6), # 👈 이름 변경
+            name="Bita_active ETF", line=dict(color=THEME_ORANGE, width=3), marker=dict(size=6),
         ))
         fig_tab.add_trace(go.Scatter(
             x=tail_dates, y=tail_kospi, mode="lines", name="KOSPI",
@@ -372,13 +342,13 @@ st.markdown('<p class="section-title">기준 가격 및 기초 지수</p>', unsa
 
 nav_kospi = NAV_BASE * (1 + res["KOSPI"]).cumprod()
 nav_k200 = NAV_BASE * (1 + res["KOSPI200"]).cumprod()
-nav_koact = NAV_BASE * (1 + res["KoAct"]).cumprod()
+nav_koact = NAV_BASE * (1 + res["KoAct"]).cumprod() if "KoAct" in res.columns else pd.Series([NAV_BASE]*len(res), index=res.index)
 x_dates = res["EndDate"]
 
 fig_nav = go.Figure()
 fig_nav.add_trace(go.Scatter(
     x=x_dates, y=nav_series, mode="lines+markers",
-    name=f"BITActive ETF", # 👈 이름 변경
+    name=f"Bita_active ETF ({strategy_label})",
     line=dict(color=THEME_ORANGE, width=3), marker=dict(size=6),
     hovertemplate="%{x}<br>%{y:,.0f}원<extra></extra>",
 ))
@@ -430,7 +400,7 @@ with col_comp:
 
     comp_df = pd.DataFrame({ "선정유형": type_weights.index, "비중": type_weights.values })
     comp_df["비중"] = comp_df["비중"].map(lambda v: f"{v * 100:.1f}%")
-    st.dataframe(comp_df, width="stretch", hide_index=True)
+    st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
 with col_stock:
     st.markdown('<p class="section-title">주식 종목별 비중 TOP5</p>', unsafe_allow_html=True)
@@ -453,7 +423,7 @@ with col_stock:
 
     disp_stock = top5_stocks[["종목명"]].copy()
     disp_stock["비중"] = top5_stocks[w_col].map(lambda v: f"{v * 100:.1f}%")
-    st.dataframe(disp_stock, width="stretch", hide_index=True)
+    st.dataframe(disp_stock, use_container_width=True, hide_index=True)
 
 # =========================================================
 # 섹션 6: 업종별 비중 TOP5
@@ -492,7 +462,7 @@ with col_sec_tbl:
         "종목": [sector_stocks[s] for s in sector_weights.index],
     })
     sec_df["비중"] = sec_df["비중"].map(lambda v: f"{v * 100:.1f}%")
-    st.dataframe(sec_df, width="stretch", hide_index=True)
+    st.dataframe(sec_df, use_container_width=True, hide_index=True)
 
 # =========================================================
 # 섹션 7: 성과 지표 카드
@@ -562,7 +532,7 @@ with col_tbl:
         "수익률": (sel_h["return"] * 100).map("{:+.2f}%".format),
         "기여도": (sel_h[contrib_col] * 100).map("{:+.3f}%".format),
     })
-    st.dataframe(disp_h, width="stretch", hide_index=True, height=350)
+    st.dataframe(disp_h, use_container_width=True, hide_index=True, height=350)
 
 with col_pie:
     st.markdown(f"**<span style='color:{THEME_ORANGE}'>🍩 포트폴리오 비중</span>**", unsafe_allow_html=True)
@@ -586,82 +556,38 @@ with col_fin:
     
     with st.spinner(f'{selected_stock} 재무 데이터 분석 중...'):
         fin = get_financial_summary(ticker)
-        if fin.get("_error"):
-            st.error(f"재무 정보를 불러올 수 없습니다.\n\n`{ticker}` → {fin['_error']}")
-        else:
+        if fin:
             m1, m2 = st.columns(2)
             m1.metric("시가총액", f"{fin['시가총액']:.1f}조")
             m2.metric("배당수익률", f"{fin['배당수익률']:.1f}%")
-
+            
             m3, m4 = st.columns(2)
             m3.metric("PER", f"{fin['PER']:.1f}배" if fin['PER'] > 0 else "N/A")
             m4.metric("PBR", f"{fin['PBR']:.1f}배" if fin['PBR'] > 0 else "N/A")
-
+            
             st.write(f"**ROE (자기자본이익률): {fin['ROE']:.1f}%**")
             st.markdown(f"<style>.stProgress > div > div > div > div {{ background-color: {THEME_ORANGE} !important; }}</style>", unsafe_allow_html=True)
             st.progress(min(max(fin['ROE']/30, 0.0), 1.0))
+        else:
+            st.error("재무 정보를 불러올 수 없습니다.")
 
 # =========================================================
-# 섹션 10: 뉴스 + AI 분석 (좌우 배치)
+# ✨ 네이버 뉴스 화면 
 # =========================================================
-st.markdown("---")
+st.markdown("---") 
+st.markdown(f"""<h4 style='color: {THEME_ORANGE};'>📰 {selected_stock} 실시간 관련 이슈</h4><div class="news-link">""", unsafe_allow_html=True)
 
-NAVER_CLIENT_ID = load_api_key("naver_client_id")
-NAVER_CLIENT_SECRET = load_api_key("naver_client_secret")
-OPENAI_KEY = load_api_key("secret_key")
+NAVER_CLIENT_ID = "8mUdV3f4VWWinJ4AFKNr"
+NAVER_CLIENT_SECRET = "EMMY6g7JBA"
 
-clean_titles = []
-clean_links = []
-clean_descs = []
-
-if NAVER_CLIENT_ID and NAVER_CLIENT_SECRET:
-    with st.spinner('최신 뉴스 검색 중...'):
-        news_items = get_naver_news(selected_stock, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, display=5)
-        if news_items:
-            for item in news_items:
-                t = html.unescape(item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"'))
-                d = html.unescape(item.get('description', '').replace('<b>', '').replace('</b>', '').replace('&quot;', '"'))
-                clean_titles.append(t)
-                clean_links.append(item['link'])
-                clean_descs.append(d)
-
-analysis = []
-if clean_titles and OPENAI_KEY:
-    with st.spinner("ChatGPT가 뉴스를 분석하고 있습니다..."):
-        analysis = analyze_news_with_gpt(selected_stock, clean_titles, clean_descs, OPENAI_KEY)
-    if analysis and analysis[0].get("_error"):
-        analysis = []
-
-col_news, col_ai = st.columns(2)
-
-with col_news:
-    st.markdown(f"""<h4 style='color: {THEME_ORANGE};'>📰 {selected_stock} 실시간 관련 이슈</h4>""",
-                unsafe_allow_html=True)
-    st.caption(f"최근 5건의 뉴스 제목입니다. 추가적인 정보는 뉴스 링크를 클릭하여 확인할 수 있습니다.")
-    if clean_titles:
-        for t, link in zip(clean_titles, clean_links):
-            st.markdown(f"- [{t}]({link})")
-    elif NAVER_CLIENT_ID:
+with st.spinner('최신 뉴스 검색 중...'):
+    news_items = get_naver_news(selected_stock, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, display=5)
+    
+    if news_items:
+        for item in news_items:
+            title = html.unescape(item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"'))
+            link = item['link']
+            st.markdown(f"- [{title}]({link})")
+    else:
         st.info("검색된 관련 뉴스가 없습니다.")
-    else:
-        st.warning("네이버 API 키가 설정되지 않았습니다.")
-
-with col_ai:
-    st.markdown(f"""<h4 style='color: {THEME_ORANGE};'>🤖 AI의 {selected_stock} 뉴스 분석</h4>""",
-                unsafe_allow_html=True)
-    if analysis:
-        BADGE = {"호재": "🟢", "악재": "🔴", "중립": "🟡"}
-        for item in analysis:
-            badge = BADGE.get(item.get("판단", "중립"), "🟡")
-            idx = item.get("번호", 0) - 1
-            title = clean_titles[idx] if 0 <= idx < len(clean_titles) else f"기사 {idx+1}"
-            summary = item.get("요약", "")
-            st.markdown(f"{badge} **{item.get('판단', '중립')}** — {title}")
-            st.markdown(f"> {summary}")
-        st.caption("GPT 기반 분석이며, 투자 판단의 근거로 사용하기에 적합하지 않습니다.")
-    elif not OPENAI_KEY:
-        st.info("OpenAI API 키가 설정되지 않아 분석을 건너뜁니다.")
-    elif not clean_titles:
-        st.info("분석할 뉴스가 없습니다.")
-    else:
-        st.error("뉴스 분석에 실패했습니다.")
+st.markdown("</div>", unsafe_allow_html=True)
